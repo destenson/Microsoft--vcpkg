@@ -33,5 +33,11 @@ namespace vcpkg
         std::vector<std::string> depends;
     };
 
+    struct BinaryControlFile
+    {
+        BinaryParagraph core_paragraph;
+        std::vector<BinaryParagraph> features;
+    };
+
     void serialize(const BinaryParagraph& pgh, std::string& out_str);
 }

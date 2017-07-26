@@ -211,10 +211,10 @@ namespace vcpkg::Commands::Install
         }
     }
 
-    void install_package(const VcpkgPaths& paths, const BinaryParagraph& binary_paragraph, StatusParagraphs* status_db)
+    void install_package(const VcpkgPaths& paths, const BinaryControlFile& bcf, StatusParagraphs* status_db)
     {
-        const fs::path package_dir = paths.package_dir(binary_paragraph.spec);
-        const Triplet& triplet = binary_paragraph.spec.triplet();
+        const fs::path package_dir = paths.package_dir(bcf.core_paragraph.spec);
+        const Triplet& triplet = bcf.core_paragraph.spec.triplet();
         const std::vector<StatusParagraphAndAssociatedFiles> pgh_and_files = get_installed_files(paths, *status_db);
 
         const SortedVector<std::string> package_files =
@@ -234,7 +234,7 @@ namespace vcpkg::Commands::Install
             System::println(System::Color::error,
                             "The following files are already installed in %s and are in conflict with %s",
                             triplet_install_path.generic_string(),
-                            binary_paragraph.spec);
+                            bcf.core_paragraph.spec);
             System::print("\n    ");
             System::println(Strings::join("\n    ", intersection));
             System::println("");
@@ -242,7 +242,7 @@ namespace vcpkg::Commands::Install
         }
 
         StatusParagraph source_paragraph;
-        source_paragraph.package = binary_paragraph;
+        source_paragraph.package = bcf.core_paragraph;
         source_paragraph.want = Want::INSTALL;
         source_paragraph.state = InstallState::HALF_INSTALLED;
         for (auto&& dep : source_paragraph.package.depends)
@@ -256,13 +256,39 @@ namespace vcpkg::Commands::Install
         status_db->insert(std::make_unique<StatusParagraph>(source_paragraph));
 
         const InstallDir install_dir = InstallDir::from_destination_root(
-            paths.installed, triplet.to_string(), paths.listfile_path(binary_paragraph));
+            paths.installed, triplet.to_string(), paths.listfile_path(bcf.core_paragraph));
 
         install_files_and_write_listfile(paths.get_filesystem(), package_dir, install_dir);
 
         source_paragraph.state = InstallState::INSTALLED;
         write_update(paths, source_paragraph);
         status_db->insert(std::make_unique<StatusParagraph>(source_paragraph));
+
+        for (auto&& feature : bcf.features)
+        {
+            StatusParagraph feature_paragraph;
+            feature_paragraph.package = feature;
+            feature_paragraph.want = Want::INSTALL;
+            feature_paragraph.state = InstallState::HALF_INSTALLED;
+            for (auto&& dep : feature_paragraph.package.depends)
+            {
+                if (status_db->find_installed(dep, feature_paragraph.package.spec.triplet()) == status_db->end())
+                {
+                    Checks::unreachable(VCPKG_LINE_INFO);
+                }
+            }
+            write_update(paths, feature_paragraph);
+            status_db->insert(std::make_unique<StatusParagraph>(feature_paragraph));
+
+            const InstallDir feature_install_dir =
+                InstallDir::from_destination_root(paths.installed, triplet.to_string(), paths.listfile_path(feature));
+
+            install_files_and_write_listfile(paths.get_filesystem(), package_dir, install_dir);
+
+            feature_paragraph.state = InstallState::INSTALLED;
+            write_update(paths, feature_paragraph);
+            status_db->insert(std::make_unique<StatusParagraph>(feature_paragraph));
+        }
     }
 
     using Build::BuildResult;
@@ -312,8 +338,8 @@ namespace vcpkg::Commands::Install
             }
             System::println("Building package %s... done", display_name);
 
-            const BinaryParagraph bpgh =
-                Paragraphs::try_load_cached_package(paths, action.spec).value_or_exit(VCPKG_LINE_INFO);
+            const BinaryControlFile bpgh =
+                Paragraphs::try_load_cached_control_package(paths, action.spec).value_or_exit(VCPKG_LINE_INFO);
             System::println("Installing package %s... ", display_name);
             install_package(paths, bpgh, &status_db);
             System::println(System::Color::success, "Installing package %s... done", display_name);
@@ -341,10 +367,10 @@ namespace vcpkg::Commands::Install
             }
             System::println("Building package %s... done", display_name);
 
-            const BinaryParagraph bpgh =
-                Paragraphs::try_load_cached_package(paths, action.spec).value_or_exit(VCPKG_LINE_INFO);
+            const BinaryControlFile bcf =
+                Paragraphs::try_load_cached_control_package(paths, action.spec).value_or_exit(VCPKG_LINE_INFO);
             System::println("Installing package %s... ", display_name);
-            install_package(paths, bpgh, &status_db);
+            install_package(paths, bcf, &status_db);
             System::println(System::Color::success, "Installing package %s... done", display_name);
             return BuildResult::SUCCEEDED;
         }
@@ -357,7 +383,9 @@ namespace vcpkg::Commands::Install
                     System::Color::warning, "Package %s is already built -- not building from HEAD", display_name);
             }
             System::println("Installing package %s... ", display_name);
-            install_package(paths, action.any_paragraph.binary_paragraph.value_or_exit(VCPKG_LINE_INFO), &status_db);
+            install_package(paths,
+                            BinaryControlFile{action.any_paragraph.binary_paragraph.value_or_exit(VCPKG_LINE_INFO)},
+                            &status_db);
             System::println(System::Color::success, "Installing package %s... done", display_name);
             return BuildResult::SUCCEEDED;
         }
@@ -390,6 +418,84 @@ namespace vcpkg::Commands::Install
 
         // create the plan
         StatusParagraphs status_db = database_load_check(paths);
+
+        if (g_feature_packages)
+        {
+            const std::vector<FullPackageSpec> full_specs = Util::fmap(args.command_arguments, [&](auto&& arg) {
+                return Input::check_and_get_full_package_spec(arg, default_triplet, example);
+            });
+
+            std::unordered_map<PackageSpec, SourceControlFile> scf_map;
+            auto all_ports = Paragraphs::try_load_all_ports(paths.get_filesystem(), paths.ports);
+            for (auto&& port : all_ports.paragraphs)
+            {
+                auto pkg_spec = PackageSpec::from_name_and_triplet(port->core_paragraph->name, default_triplet)
+                                    .value_or_exit(VCPKG_LINE_INFO);
+                scf_map[pkg_spec] = std::move(*port);
+            }
+            std::vector<Dependencies::AnyAction> action_plan =
+                Dependencies::create_feature_install_plan(scf_map, full_specs, status_db);
+            // install plan will be empty if it is already installed - need to change this at status paragraph part
+            Checks::check_exit(
+                VCPKG_LINE_INFO, !action_plan.empty(), "Install plan cannot be empty for feature packages");
+
+            const Build::BuildPackageOptions install_plan_options = {Build::to_use_head_version(use_head_version),
+                                                                     Build::to_allow_downloads(!no_downloads)};
+
+            // execute the plan
+            for (const Dependencies::AnyAction& any_action : action_plan)
+            {
+                if (auto install_action = any_action.install_plan.get())
+                {
+                    const BuildResult result =
+                        perform_install_plan_action(paths, *install_action, install_plan_options, status_db);
+                    if (result != BuildResult::SUCCEEDED)
+                    {
+                        System::println(Build::create_user_troubleshooting_message(install_action->spec));
+                        Checks::exit_fail(VCPKG_LINE_INFO);
+                    }
+                }
+                else if (auto remove_action = any_action.remove_plan.get())
+                {
+                    static const std::string OPTION_PURGE = "--purge";
+                    static const std::string OPTION_NO_PURGE = "--no-purge";
+
+                    const bool alsoRemoveFolderFromPackages = options.find(OPTION_NO_PURGE) == options.end();
+                    if (options.find(OPTION_PURGE) != options.end() && !alsoRemoveFolderFromPackages)
+                    {
+                        // User specified --purge and --no-purge
+                        System::println(System::Color::error, "Error: cannot specify both --no-purge and --purge.");
+                        System::print(example);
+                        Checks::exit_fail(VCPKG_LINE_INFO);
+                    }
+                    const std::string display_name = remove_action->spec.to_string();
+                    switch (remove_action->plan_type)
+                    {
+                        case RemovePlanType::NOT_INSTALLED:
+                            System::println(System::Color::success, "Package %s is not installed", display_name);
+                            break;
+                        case RemovePlanType::REMOVE:
+                            System::println("Removing package %s... ", display_name);
+                            Commands::Remove::remove_package(paths, remove_action->spec, &status_db);
+                            System::println(System::Color::success, "Removing package %s... done", display_name);
+                            break;
+                        case RemovePlanType::UNKNOWN:
+                        default: Checks::unreachable(VCPKG_LINE_INFO);
+                    }
+
+                    if (alsoRemoveFolderFromPackages)
+                    {
+                        System::println("Purging package %s... ", display_name);
+                        Files::Filesystem& fs = paths.get_filesystem();
+                        std::error_code ec;
+                        fs.remove_all(paths.packages / remove_action->spec.dir(), ec);
+                        System::println(System::Color::success, "Purging package %s... done", display_name);
+                    }
+                }
+            }
+
+            Checks::exit_success(VCPKG_LINE_INFO);
+        }
 
         Dependencies::PathsPortFile paths_port_file(paths);
         std::vector<InstallPlanAction> install_plan =
