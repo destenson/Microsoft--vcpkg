@@ -88,20 +88,6 @@ namespace vcpkg::Build
         return Strings::wformat(LR"("%s" %s %s %s 2>&1)", toolset.vcvarsall.native(), arch, target, tonull);
     }
 
-    // static void create_binary_control_file(const VcpkgPaths& paths,
-    //                                       const SourceParagraph& source_paragraph,
-    //                                       const Triplet& triplet,
-    //                                       const BuildInfo& build_info)
-    //{
-    //    BinaryParagraph bpgh = BinaryParagraph(source_paragraph, triplet);
-    //    if (auto p_ver = build_info.version.get())
-    //    {
-    //        bpgh.version = *p_ver;
-    //    }
-    //    const fs::path binary_control_file = paths.packages / bpgh.dir() / "CONTROL";
-    //    paths.get_filesystem().write_contents(binary_control_file, Strings::serialize(bpgh));
-    //}
-
     static void create_binary_feature_control_file(const SourceParagraph& source_paragraph,
                                                    const FeatureParagraph& feature_paragraph,
                                                    const Triplet& triplet,
