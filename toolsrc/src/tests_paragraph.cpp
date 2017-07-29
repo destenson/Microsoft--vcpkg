@@ -396,6 +396,18 @@ namespace UnitTest1
             Assert::AreEqual(vcpkg::PackageSpecParseResult::TOO_MANY_COLONS, ec);
         }
 
+        TEST_METHOD(package_spec_feature_parse_with_arch)
+        {
+            vcpkg::ExpectedT<vcpkg::FullPackageSpec, vcpkg::PackageSpecParseResult> spec =
+                vcpkg::FullPackageSpec::from_string("zlib[feature]:x64-uwp", vcpkg::Triplet::X86_WINDOWS);
+            Assert::AreEqual(vcpkg::PackageSpecParseResult::SUCCESS, spec.error());
+            Assert::AreEqual("zlib", spec.get()->package_spec.name().c_str());
+            Assert::IsTrue(spec.get()->features.size() == 1);
+            Assert::AreEqual("feature", spec.get()->features.front().c_str());
+            Assert::AreEqual(vcpkg::Triplet::X64_UWP.canonical_name(),
+                             spec.get()->package_spec.triplet().canonical_name());
+        }
+
         TEST_METHOD(utf8_to_utf16)
         {
             auto str = vcpkg::Strings::to_utf16("abc");

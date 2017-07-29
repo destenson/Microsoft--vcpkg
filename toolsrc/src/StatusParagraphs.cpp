@@ -27,6 +27,20 @@ namespace vcpkg
         });
     }
 
+    std::vector<std::unique_ptr<StatusParagraph>*> StatusParagraphs::find_all(const std::string& name,
+                                                                              const Triplet& triplet)
+    {
+        std::vector<std::unique_ptr<StatusParagraph>*> spghs;
+        for (auto&& p : *this)
+        {
+            if (p->package.spec.name() == name && p->package.spec.triplet() == triplet)
+            {
+                spghs.emplace_back(&p);
+            }
+        }
+        return spghs;
+    }
+
     StatusParagraphs::iterator StatusParagraphs::find(const std::string& name,
                                                       const Triplet& triplet,
                                                       const std::string& feature)

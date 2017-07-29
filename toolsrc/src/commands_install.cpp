@@ -255,21 +255,16 @@ namespace vcpkg::Commands::Install
         write_update(paths, source_paragraph);
         status_db->insert(std::make_unique<StatusParagraph>(source_paragraph));
 
-        const InstallDir install_dir = InstallDir::from_destination_root(
-            paths.installed, triplet.to_string(), paths.listfile_path(bcf.core_paragraph));
-
-        install_files_and_write_listfile(paths.get_filesystem(), package_dir, install_dir);
-
-        source_paragraph.state = InstallState::INSTALLED;
-        write_update(paths, source_paragraph);
-        status_db->insert(std::make_unique<StatusParagraph>(source_paragraph));
-
+        std::vector<StatusParagraph> features_spghs;
         for (auto&& feature : bcf.features)
         {
-            StatusParagraph feature_paragraph;
+            features_spghs.emplace_back();
+
+            StatusParagraph& feature_paragraph = features_spghs.back();
             feature_paragraph.package = feature;
             feature_paragraph.want = Want::INSTALL;
             feature_paragraph.state = InstallState::HALF_INSTALLED;
+
             for (auto&& dep : feature_paragraph.package.depends)
             {
                 if (status_db->find_installed(dep, feature_paragraph.package.spec.triplet()) == status_db->end())
@@ -279,12 +274,19 @@ namespace vcpkg::Commands::Install
             }
             write_update(paths, feature_paragraph);
             status_db->insert(std::make_unique<StatusParagraph>(feature_paragraph));
+        }
 
-            const InstallDir feature_install_dir =
-                InstallDir::from_destination_root(paths.installed, triplet.to_string(), paths.listfile_path(feature));
+        const InstallDir install_dir = InstallDir::from_destination_root(
+            paths.installed, triplet.to_string(), paths.listfile_path(bcf.core_paragraph));
 
-            install_files_and_write_listfile(paths.get_filesystem(), package_dir, install_dir);
+        install_files_and_write_listfile(paths.get_filesystem(), package_dir, install_dir);
 
+        source_paragraph.state = InstallState::INSTALLED;
+        write_update(paths, source_paragraph);
+        status_db->insert(std::make_unique<StatusParagraph>(source_paragraph));
+
+        for (auto&& feature_paragraph : features_spghs)
+        {
             feature_paragraph.state = InstallState::INSTALLED;
             write_update(paths, feature_paragraph);
             status_db->insert(std::make_unique<StatusParagraph>(feature_paragraph));
@@ -348,10 +350,11 @@ namespace vcpkg::Commands::Install
 
         if (plan_type == InstallPlanType::BUILD_AND_INSTALL && g_feature_packages)
         {
+            const std::string display_name_feature = action.displayname();
             if (use_head_version)
-                System::println("Building package %s from HEAD... ", display_name);
+                System::println("Building package %s from HEAD... ", display_name_feature);
             else
-                System::println("Building package %s... ", display_name);
+                System::println("Building package %s... ", display_name_feature);
 
             const Build::BuildPackageConfig build_config{
                 *action.any_paragraph.source_control_file.value_or_exit(VCPKG_LINE_INFO),
@@ -365,13 +368,13 @@ namespace vcpkg::Commands::Install
                 System::println(System::Color::error, Build::create_error_message(result.code, action.spec));
                 return result.code;
             }
-            System::println("Building package %s... done", display_name);
+            System::println("Building package %s... done", display_name_feature);
 
             const BinaryControlFile bcf =
                 Paragraphs::try_load_cached_control_package(paths, action.spec).value_or_exit(VCPKG_LINE_INFO);
-            System::println("Installing package %s... ", display_name);
+            System::println("Installing package %s... ", display_name_feature);
             install_package(paths, bcf, &status_db);
-            System::println(System::Color::success, "Installing package %s... done", display_name);
+            System::println(System::Color::success, "Installing package %s... done", display_name_feature);
             return BuildResult::SUCCEEDED;
         }
 
@@ -393,11 +396,27 @@ namespace vcpkg::Commands::Install
         Checks::unreachable(VCPKG_LINE_INFO);
     }
 
+    static void print_plan(const std::vector<const InstallPlanAction*> rebuilt_plans,
+                           const std::vector<const InstallPlanAction*> new_plans)
+    {
+        const std::string rebuilt_string = Strings::join("\n", rebuilt_plans, [](const InstallPlanAction* p) {
+            return Dependencies::to_output_string(p->request_type, p->displayname());
+        });
+
+        const std::string new_string = Strings::join("\n", new_plans, [](const InstallPlanAction* p) {
+            return Dependencies::to_output_string(p->request_type, p->displayname());
+        });
+
+        if (rebuilt_plans.size() > 0) System::println("The following packages will be rebuilt:\n%s", rebuilt_string);
+        if (new_plans.size() > 0) System::println("The following packages will be installed:\n%s", new_string);
+    }
+
     void perform_and_exit(const VcpkgCmdArguments& args, const VcpkgPaths& paths, const Triplet& default_triplet)
     {
         static const std::string OPTION_DRY_RUN = "--dry-run";
         static const std::string OPTION_USE_HEAD_VERSION = "--head";
         static const std::string OPTION_NO_DOWNLOADS = "--no-downloads";
+        static const std::string OPTION_RECURSE = "--recurse";
 
         // input sanitization
         static const std::string example =
@@ -411,10 +430,11 @@ namespace vcpkg::Commands::Install
             Input::check_triplet(spec.triplet(), paths);
 
         const std::unordered_set<std::string> options = args.check_and_get_optional_command_arguments(
-            {OPTION_DRY_RUN, OPTION_USE_HEAD_VERSION, OPTION_NO_DOWNLOADS});
+            {OPTION_DRY_RUN, OPTION_USE_HEAD_VERSION, OPTION_NO_DOWNLOADS, OPTION_RECURSE});
         const bool dryRun = options.find(OPTION_DRY_RUN) != options.cend();
         const bool use_head_version = options.find(OPTION_USE_HEAD_VERSION) != options.cend();
         const bool no_downloads = options.find(OPTION_NO_DOWNLOADS) != options.cend();
+        const bool isRecursive = options.find(OPTION_RECURSE) != options.cend();
 
         // create the plan
         StatusParagraphs status_db = database_load_check(paths);
@@ -441,6 +461,43 @@ namespace vcpkg::Commands::Install
 
             const Build::BuildPackageOptions install_plan_options = {Build::to_use_head_version(use_head_version),
                                                                      Build::to_allow_downloads(!no_downloads)};
+
+            std::vector<const RemovePlanAction*> remove_plans;
+
+            std::vector<const InstallPlanAction*> rebuilt_plans;
+            std::vector<const InstallPlanAction*> new_plans;
+
+            // removal will happen before install
+            for (auto&& action : action_plan)
+            {
+                if (auto install_action = action.install_plan.get())
+                {
+                    auto it = Util::find_if(
+                        remove_plans, [&](const RemovePlanAction* plan) { return plan->spec == install_action->spec; });
+                    if (it != remove_plans.end())
+                    {
+                        rebuilt_plans.emplace_back(install_action);
+                    }
+                    else
+                    {
+                        new_plans.emplace_back(install_action);
+                    }
+                }
+                else if (auto remove_action = action.remove_plan.get())
+                {
+                    remove_plans.emplace_back(remove_action);
+                }
+            }
+
+            print_plan(rebuilt_plans, new_plans);
+
+            if (remove_plans.size() > 0 && !isRecursive)
+            {
+                System::println(System::Color::warning,
+                                "If you are sure you want to rebuild the above packages, run the command with the "
+                                "--recurse option");
+                Checks::exit_fail(VCPKG_LINE_INFO);
+            }
 
             // execute the plan
             for (const Dependencies::AnyAction& any_action : action_plan)

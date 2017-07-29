@@ -67,12 +67,12 @@ namespace vcpkg::Commands::Search
     {
         if (full_desc)
         {
-            System::println("%-37s %s", name + "[" + feature_paragraph.name + "]", feature_paragraph.description);
+            System::println("%-37s %s", name + "(" + feature_paragraph.name + ")", feature_paragraph.description);
         }
         else
         {
             System::println("%-37s %s",
-                            name + "[" + feature_paragraph.name + "]",
+                            name + "(" + feature_paragraph.name + ")",
                             vcpkg::shorten_description(feature_paragraph.description));
         }
     }
