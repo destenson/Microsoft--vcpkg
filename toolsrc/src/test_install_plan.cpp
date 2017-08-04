@@ -434,7 +434,7 @@ namespace UnitTest1
                 {"1"}};
 
             auto install_plan = Dependencies::create_feature_install_plan(
-                spec_map.map, {spec_b, spec_x}, StatusParagraphs(std::move(status_paragraphs)));
+                spec_map.map, {spec_b}, StatusParagraphs(std::move(status_paragraphs)));
 
             Assert::AreEqual(size_t(5), install_plan.size());
             remove_plan_check(&install_plan[0], "x");

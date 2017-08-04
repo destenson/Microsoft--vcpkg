@@ -245,13 +245,7 @@ namespace vcpkg::Commands::Install
         source_paragraph.package = bcf.core_paragraph;
         source_paragraph.want = Want::INSTALL;
         source_paragraph.state = InstallState::HALF_INSTALLED;
-        for (auto&& dep : source_paragraph.package.depends)
-        {
-            if (status_db->find_installed(dep, source_paragraph.package.spec.triplet()) == status_db->end())
-            {
-                Checks::unreachable(VCPKG_LINE_INFO);
-            }
-        }
+
         write_update(paths, source_paragraph);
         status_db->insert(std::make_unique<StatusParagraph>(source_paragraph));
 
@@ -265,13 +259,6 @@ namespace vcpkg::Commands::Install
             feature_paragraph.want = Want::INSTALL;
             feature_paragraph.state = InstallState::HALF_INSTALLED;
 
-            for (auto&& dep : feature_paragraph.package.depends)
-            {
-                if (status_db->find_installed(dep, feature_paragraph.package.spec.triplet()) == status_db->end())
-                {
-                    Checks::unreachable(VCPKG_LINE_INFO);
-                }
-            }
             write_update(paths, feature_paragraph);
             status_db->insert(std::make_unique<StatusParagraph>(feature_paragraph));
         }

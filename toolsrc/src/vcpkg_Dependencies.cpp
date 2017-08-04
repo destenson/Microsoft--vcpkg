@@ -116,7 +116,7 @@ namespace vcpkg::Dependencies
             }
             features.pop_back();
 
-            return this->spec.name() + "(" + features + "):" + this->spec.triplet().to_string();
+            return this->spec.name() + "[" + features + "]:" + this->spec.triplet().to_string();
         }
     }
 
@@ -338,9 +338,9 @@ namespace vcpkg::Dependencies
                                                      ? RequestType::USER_REQUESTED
                                                      : RequestType::AUTO_SELECTED;
 
-                Expected<BinaryParagraph> maybe_bpgh = Paragraphs::try_load_cached_package(paths, spec);
-                if (auto bpgh = maybe_bpgh.get())
-                    return ExportPlanAction{spec, {nullopt, *bpgh, nullopt}, request_type};
+                Expected<BinaryControlFile> maybe_bpgh = Paragraphs::try_load_cached_control_package(paths, spec);
+                if (auto bcf = maybe_bpgh.get())
+                    return ExportPlanAction{spec, {nullopt, bcf->core_paragraph, nullopt}, request_type};
 
                 auto maybe_scf = Paragraphs::try_load_port(paths.get_filesystem(), paths.port_dir(spec));
                 if (auto scf = maybe_scf.get())

@@ -89,11 +89,11 @@ namespace vcpkg
     {
         if (this->feature == "")
         {
-            return this->spec.name() + "(core):" + this->spec.triplet().to_string();
+            return this->spec.name() + "[core]:" + this->spec.triplet().to_string();
         }
         else
         {
-            return this->spec.name() + "(" + this->feature + "):" + this->spec.triplet().to_string();
+            return this->spec.name() + "[" + this->feature + "]:" + this->spec.triplet().to_string();
         }
     }
 
