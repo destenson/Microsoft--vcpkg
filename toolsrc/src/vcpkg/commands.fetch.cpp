@@ -337,7 +337,7 @@ namespace vcpkg::Commands::Fetch
                            std::to_string(err));
 
         auto hSession = WinHttpOpen(
-            L"vcpkg/1.0", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+            L"vcpkg/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
         Checks::check_exit(VCPKG_LINE_INFO, hSession, "WinHttpOpen() failed: %d", GetLastError());
 
         // Use Windows 10 defaults on Windows 7
